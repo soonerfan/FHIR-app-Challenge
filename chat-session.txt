@@ -1,0 +1,95 @@
+FHIR App Challenge - Chat Session Log
+======================================
+
+Date: 2026-08-26
+Repository: soonerfan/FHIR-app-Challenge
+Branch: main
+
+User request 1:
+Can you build a full stack app with C#?
+
+Implementation:
+- Created an ASP.NET Core 9 Blazor Web App in the FhirRegistry directory.
+- Added a clinical patient registry UI named Pulse.
+- Added responsive navigation, dashboard metrics, patient table, search, patient detail drawer, and new-patient modal.
+- Added a Patient model with FHIR-style fields.
+- Added a PatientStore service.
+- Initially used in-memory sample patient data.
+- Added responsive styling in wwwroot/app.css.
+
+Initial validation:
+- .NET SDK 9.0.302 was available.
+- dotnet build succeeded.
+- The app was run at http://localhost:5187.
+- HTTP smoke test returned 200 and confirmed the Patient registry page loaded.
+
+User request 2:
+I want to connect to an external FHIR server that already has patient data.
+
+Implementation:
+- Replaced the in-memory PatientStore with an HttpClient-backed FHIR service.
+- Added support for reading patients with:
+  GET /Patient?_count=100&_sort=-_lastUpdated
+- Added support for creating patients with:
+  POST /Patient
+- Added mapping for common FHIR R4 Patient fields:
+  id, name, gender, birthDate, phone, email, and meta.lastUpdated.
+- Added asynchronous loading and creation in Home.razor.
+- Added loading state and visible FHIR connection error handling.
+- Added resilience when phone or email telecom entries are missing.
+- Default FHIR base URL is https://hapi.fhir.org/baseR4/.
+
+User request 3:
+Requests will need to use a Bearer Token for authorization.
+
+Implementation:
+- Configured the typed HttpClient to send:
+  Authorization: Bearer <token>
+- BearerToken is now required. The app fails fast if it is not configured.
+- Added Accept: application/fhir+json to FHIR requests.
+- Removed the token value from committed appsettings.json.
+- Documented secure token configuration in README.md.
+
+User request 4:
+Can these settings be added to appsettings.Development.json?
+
+Implementation:
+- Added the Fhir section to appsettings.Development.json:
+  {
+    "Fhir": {
+      "BaseUrl": "https://hapi.fhir.org/baseR4/",
+      "BearerToken": ""
+    }
+  }
+- Added UserSecretsId FhirRegistry-Development to FhirRegistry.csproj.
+- Documented .NET User Secrets configuration in README.md.
+- The bearer token remains empty in the committed development settings file so no secret is stored in source control.
+
+Secure local configuration:
+
+  dotnet user-secrets --project .\\FhirRegistry\\FhirRegistry.csproj set "Fhir:BaseUrl" "https://your-fhir-server.example.com/fhir"
+  dotnet user-secrets --project .\\FhirRegistry\\FhirRegistry.csproj set "Fhir:BearerToken" "your-token"
+  dotnet run --project .\\FhirRegistry\\FhirRegistry.csproj --urls http://localhost:5187
+
+Alternative environment variables:
+
+  $env:Fhir__BaseUrl = "https://your-fhir-server.example.com/fhir"
+  $env:Fhir__BearerToken = "your-token"
+
+Final validation:
+- dotnet build succeeded after the bearer-token and development-settings changes.
+- Source diagnostics reported no errors in Program.cs, PatientStore.cs, or Home.razor.
+- The app endpoint responded with HTTP 200.
+
+Main files:
+- FhirRegistry/Program.cs
+- FhirRegistry/Services/PatientStore.cs
+- FhirRegistry/Models/Patient.cs
+- FhirRegistry/Components/Pages/Home.razor
+- FhirRegistry/Components/Layout/NavMenu.razor
+- FhirRegistry/Components/Layout/MainLayout.razor
+- FhirRegistry/wwwroot/app.css
+- FhirRegistry/appsettings.json
+- FhirRegistry/appsettings.Development.json
+- FhirRegistry/FhirRegistry.csproj
+- README.md

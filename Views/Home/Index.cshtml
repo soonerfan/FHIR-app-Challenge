@@ -1,0 +1,157 @@
+﻿@{
+    ViewData["Title"] = "Patient Manager";
+}
+
+<div class="app-shell">
+    <header class="app-header">
+        <div>
+            <p class="eyebrow">FHIR R4 / PATIENT MANAGER</p>
+            <h1>FHIR Patient Manager</h1>
+            <p class="lede">Maintain Patients in your connected FHIR R4 server</p>
+        </div>
+        <div class="server-badge"><span></span> Live FHIR connection</div>
+    </header>
+
+    <div id="message" class="message" role="alert" aria-live="polite"></div>
+    <section class="workspace">
+        <div class="panel list-panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="section-kicker">Directory</p>
+                    <h2>Patients <span id="patient-count" class="count">0</span></h2>
+                </div>
+                <button id="new-patient" class="button button-primary" type="button">+ New patient</button>
+            </div>
+            <div class="search-row">
+                <label class="search-box" for="search-input">
+                    <span aria-hidden="true">⌕</span>
+                    <input id="search-input" type="search" placeholder="Search by patient name" autocomplete="off" />
+                </label>
+                <button id="refresh-patients" class="button button-quiet" type="button">Refresh</button>
+            </div>
+            <div id="loading" class="loading" hidden>Loading patients...</div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Patient</th><th>Gender</th><th>Date of birth</th><th><span class="sr-only">Actions</span></th></tr></thead>
+                    <tbody id="patient-rows"></tbody>
+                </table>
+                <div id="empty-state" class="empty-state" hidden>No patients found for this search.</div>
+            </div>
+        </div>
+
+    </section>
+</div>
+
+<dialog id="edit-dialog" class="edit-dialog" aria-labelledby="edit-dialog-title">
+    <div class="dialog-heading"><div><p class="section-kicker">Record</p><h2 id="edit-dialog-title">Edit patient</h2></div><button id="close-edit" class="dialog-close" type="button" aria-label="Close edit dialog">&times;</button></div>
+    <form id="edit-form" novalidate>
+        <label>Given name<input id="edit-given-name" required maxlength="100" /></label>
+        <label>Family name<input id="edit-family-name" required maxlength="100" /></label>
+        <label>Gender<select id="edit-gender" required><option value="">Select gender</option><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option><option value="unknown">Unknown</option></select></label>
+        <label>Date of birth<input id="edit-birth-date" type="date" required /></label>
+        <p id="edit-form-error" class="field-error" role="alert"></p>
+        <div class="form-actions"><button id="cancel-edit" class="button button-quiet" type="button">Cancel</button><button id="update-patient" class="button button-primary" type="submit">Update patient</button></div>
+    </form>
+</dialog>
+
+<dialog id="create-dialog" class="edit-dialog" aria-labelledby="create-dialog-title">
+    <div class="dialog-heading"><div><p class="section-kicker">Record</p><h2 id="create-dialog-title">New patient</h2></div><button id="close-create" class="dialog-close" type="button" aria-label="Close create dialog">&times;</button></div>
+    <form id="patient-form" novalidate>
+        <label>Given name<input id="given-name" name="givenName" required maxlength="100" /></label>
+        <label>Family name<input id="family-name" name="familyName" required maxlength="100" /></label>
+        <label>Gender<select id="gender" name="gender" required><option value="">Select gender</option><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option><option value="unknown">Unknown</option></select></label>
+        <label>Date of birth<input id="birth-date" name="birthDate" type="date" required /></label>
+        <p id="form-error" class="field-error" role="alert"></p>
+        <div class="form-actions"><button id="cancel-create" class="button button-quiet" type="button">Cancel</button><button id="save-patient" class="button button-primary" type="submit">Save patient</button></div>
+    </form>
+</dialog>
+
+@section Scripts {
+<script>
+(() => {
+    const state = { editingId: null };
+    const rows = document.querySelector('#patient-rows');
+    const loading = document.querySelector('#loading');
+    const empty = document.querySelector('#empty-state');
+    const message = document.querySelector('#message');
+    const form = document.querySelector('#patient-form');
+    const error = document.querySelector('#form-error');
+    const editDialog = document.querySelector('#edit-dialog');
+    const editForm = document.querySelector('#edit-form');
+    const editError = document.querySelector('#edit-form-error');
+    const createDialog = document.querySelector('#create-dialog');
+
+    const showMessage = (text, kind = 'error') => { message.textContent = text; message.className = text ? `message ${kind}` : 'message'; };
+    const patientName = patient => `${patient.name?.[0]?.given?.join(' ') || ''} ${patient.name?.[0]?.family || ''}`.trim() || 'Unnamed patient';
+    const formatDate = value => value ? new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Not recorded';
+
+    async function loadPatients() {
+        loading.hidden = false; empty.hidden = true; rows.innerHTML = '';
+        try {
+            const query = document.querySelector('#search-input').value.trim();
+            const response = await fetch(`/api/patients${query ? `?name=${encodeURIComponent(query)}` : ''}`);
+            if (!response.ok) throw new Error(await readError(response));
+            const bundle = await response.json();
+            const patients = (bundle.entry || []).map(entry => entry.resource).filter(Boolean);
+            document.querySelector('#patient-count').textContent = patients.length;
+            patients.forEach(patient => {
+                const row = document.createElement('tr');
+                const gender = patient.gender || 'unknown';
+                const genderClass = ['male', 'female'].includes(gender) ? gender : 'neutral';
+                row.innerHTML = `<td><a class="patient-link" href="/patient/${encodeURIComponent(patient.id || '')}"><strong>${escapeHtml(patientName(patient))}</strong><small>${escapeHtml(patient.id || 'No ID')}</small></a></td><td><span class="gender-tag gender-${genderClass}">${escapeHtml(gender)}</span></td><td>${formatDate(patient.birthDate)}</td><td><button class="edit-button" data-id="${escapeHtml(patient.id || '')}" type="button">Edit</button></td>`;
+                row.querySelector('.edit-button').addEventListener('click', () => editPatient(patient));
+                rows.appendChild(row);
+            });
+            empty.hidden = patients.length > 0;
+        } catch (exception) { showMessage(exception.message); }
+        finally { loading.hidden = true; }
+    }
+
+    function editPatient(patient) {
+        state.editingId = patient.id;
+        document.querySelector('#edit-given-name').value = patient.name?.[0]?.given?.[0] || '';
+        document.querySelector('#edit-family-name').value = patient.name?.[0]?.family || '';
+        document.querySelector('#edit-gender').value = patient.gender || '';
+        document.querySelector('#edit-birth-date').value = patient.birthDate || '';
+        editError.textContent = '';
+        editDialog.showModal();
+    }
+
+    function resetForm() { form.reset(); error.textContent = ''; }
+    function openCreateDialog() { resetForm(); createDialog.showModal(); }
+    function closeCreateDialog() { resetForm(); createDialog.close(); }
+    function closeEditDialog() { state.editingId = null; editForm.reset(); editError.textContent = ''; editDialog.close(); }
+    function escapeHtml(value) { const div = document.createElement('div'); div.textContent = value; return div.innerHTML; }
+    async function readError(response) { try { const body = await response.json(); return body.detail || body.error || `FHIR request failed (${response.status})`; } catch { return `FHIR request failed (${response.status})`; } }
+
+    async function submitPatient(event, currentForm, currentError, id = null) {
+        event.preventDefault(); currentError.textContent = '';
+        if (!currentForm.checkValidity()) { currentForm.reportValidity(); return; }
+        const prefix = id ? 'edit-' : '';
+        const payload = { givenName: document.querySelector(`#${prefix}given-name`).value.trim(), familyName: document.querySelector(`#${prefix}family-name`).value.trim(), gender: document.querySelector(`#${prefix}gender`).value, birthDate: document.querySelector(`#${prefix}birth-date`).value };
+        const button = currentForm.querySelector('button[type="submit"]'); button.disabled = true; button.textContent = id ? 'Updating...' : 'Saving...';
+        try {
+            const url = id ? `/api/patients/${encodeURIComponent(id)}` : '/api/patients';
+            const response = await fetch(url, { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (!response.ok) throw new Error(await readError(response));
+            const successMessage = id ? 'Patient updated.' : 'Patient created.';
+            if (id) closeEditDialog(); else closeCreateDialog();
+            showMessage(successMessage, 'success'); await loadPatients();
+        } catch (exception) { currentError.textContent = exception.message; }
+        finally { button.disabled = false; button.textContent = id ? 'Update patient' : 'Save patient'; }
+    }
+    form.addEventListener('submit', event => submitPatient(event, form, error));
+    editForm.addEventListener('submit', event => submitPatient(event, editForm, editError, state.editingId));
+    document.querySelector('#new-patient').addEventListener('click', openCreateDialog);
+    document.querySelector('#cancel-create').addEventListener('click', closeCreateDialog);
+    document.querySelector('#close-create').addEventListener('click', closeCreateDialog);
+    createDialog.addEventListener('click', event => { if (event.target === createDialog) closeCreateDialog(); });
+    document.querySelector('#cancel-edit').addEventListener('click', closeEditDialog);
+    document.querySelector('#close-edit').addEventListener('click', closeEditDialog);
+    editDialog.addEventListener('click', event => { if (event.target === editDialog) closeEditDialog(); });
+    document.querySelector('#refresh-patients').addEventListener('click', loadPatients);
+    let searchTimer; document.querySelector('#search-input').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadPatients, 300); });
+    loadPatients();
+})();
+</script>
+}

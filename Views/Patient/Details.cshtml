@@ -1,0 +1,96 @@
+@model FHIR_app_Challenge.Controllers.PatientDetailsViewModel
+@{
+    ViewData["Title"] = "Patient details";
+}
+
+<div class="detail-shell" data-patient-id="@Model.Id">
+    <a class="back-link" href="/">&larr; Back to patients</a>
+    <div id="detail-message" class="message" role="alert" aria-live="polite"></div>
+    <div id="detail-loading" class="loading">Loading patient record...</div>
+    <main id="detail-content" hidden>
+        <header class="detail-header">
+            <div>
+                <p class="eyebrow">FHIR R4 / PATIENT RECORD</p>
+                <h1 id="patient-name">Patient details</h1>
+            </div>
+            <div class="demographics" aria-label="Patient demographics">
+                <div><span>Gender</span><strong id="patient-gender">Not recorded</strong></div>
+                <div><span>Date of birth</span><strong id="patient-birth-date">Not recorded</strong></div>
+            </div>
+        </header>
+
+        <section class="detail-section">
+            <div class="section-bar"><div><p class="section-kicker">Clinical measurements</p><h2>Vitals</h2></div><div class="view-toggle" role="group" aria-label="Vitals display mode"><button class="toggle-button active" data-view="charts" type="button">Charts</button><button class="toggle-button" data-view="table" type="button">Table</button></div></div>
+            <div id="vital-charts" class="vital-grid"></div>
+            <div id="vital-table" class="data-table-wrap" hidden><table><thead><tr><th>Vital sign</th><th>Date</th><th>Value</th></tr></thead><tbody id="vital-rows"></tbody></table><div id="vital-empty" class="empty-state" hidden>No vital sign readings found.</div></div>
+        </section>
+
+        <section class="detail-section split-section">
+            <div><div class="section-bar compact"><div><p class="section-kicker">Diagnoses</p><h2>Conditions</h2></div></div><div class="data-table-wrap"><table><thead><tr><th>Condition</th><th>Onset date</th></tr></thead><tbody id="condition-rows"></tbody></table><div id="condition-empty" class="empty-state" hidden>No conditions found.</div></div></div>
+            <div><div class="section-bar compact"><div><p class="section-kicker">Therapy</p><h2>Current medications</h2></div></div><div class="data-table-wrap"><table><thead><tr><th>Medication</th><th>Status</th></tr></thead><tbody id="medication-rows"></tbody></table><div id="medication-empty" class="empty-state" hidden>No medications found.</div></div></div>
+        </section>
+    </main>
+</div>
+
+@section Scripts {
+<script>
+(() => {
+    const patientId = document.querySelector('.detail-shell').dataset.patientId;
+    const loading = document.querySelector('#detail-loading');
+    const content = document.querySelector('#detail-content');
+    const message = document.querySelector('#detail-message');
+    const vitalDefinitions = [
+        { code: '8867-4', label: 'Heart rate', unit: 'beats/min' }, { code: '8310-5', label: 'Temperature', unit: 'C' },
+        { code: '9279-1', label: 'Respiratory rate', unit: 'breaths/min' }, { code: '59408-5', label: 'Oxygen saturation', unit: '%' },
+        { code: '8302-2', label: 'Height', unit: 'cm' }, { code: '29463-7', label: 'Weight', unit: 'kg' }, { code: '39156-5', label: 'BMI', unit: 'kg/m2' },
+        { code: 'blood-pressure', label: 'Blood pressure', unit: 'mmHg', components: [{ code: '8480-6', label: 'Systolic' }, { code: '8462-4', label: 'Diastolic' }] }
+    ];
+    const escapeHtml = value => { const div = document.createElement('div'); div.textContent = value ?? ''; return div.innerHTML; };
+    const formatDate = value => value ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Not recorded';
+    const showError = text => { message.textContent = text; message.className = 'message error'; };
+    const valueOf = observation => observation.valueQuantity?.value ?? observation.valueString ?? observation.valueCodeableConcept?.coding?.[0]?.display ?? 'Not recorded';
+    const dateOf = observation => observation.effectiveDateTime || observation.effectivePeriod?.start || observation.issued;
+    const displayCode = resource => resource.code?.text || resource.code?.coding?.[0]?.display || 'Not recorded';
+    const bundleResources = bundle => (bundle.entry || []).map(entry => entry.resource).filter(Boolean);
+
+    async function getJson(url) { const response = await fetch(url); if (!response.ok) throw new Error(`Request failed (${response.status})`); return response.json(); }
+    function patientName(patient) { return `${patient.name?.[0]?.given?.join(' ') || ''} ${patient.name?.[0]?.family || ''}`.trim() || 'Unnamed patient'; }
+    function drawChart(container, definition, observations) {
+        const series = definition.components ? definition.components.map(component => ({ ...component, points: observations.flatMap(item => (item.component || []).filter(part => part.code?.coding?.some(coding => coding.code === component.code)).map(part => ({ date: dateOf(item), value: part.valueQuantity?.value })) ).filter(point => point.value != null) })) : [{ label: definition.label, points: observations.map(item => ({ date: dateOf(item), value: valueOf(item) })).filter(point => typeof point.value === 'number') }];
+        const allPoints = series.flatMap(item => item.points).sort((a, b) => new Date(a.date) - new Date(b.date));
+        if (!allPoints.length) { container.innerHTML = '<p class="chart-empty">No readings recorded</p>'; return; }
+        const width = 520, height = 170, pad = { left: 40, right: 16, top: 18, bottom: 30 };
+        const values = allPoints.map(point => Number(point.value)); const min = Math.min(...values), max = Math.max(...values); const range = max === min ? 1 : max - min;
+        const dates = allPoints.map(point => new Date(point.date).getTime()); const dateRange = Math.max(...dates) - Math.min(...dates) || 1;
+        const x = date => pad.left + ((new Date(date).getTime() - Math.min(...dates)) / dateRange) * (width - pad.left - pad.right);
+        const y = value => pad.top + ((max - value) / range) * (height - pad.top - pad.bottom);
+        const colors = ['#d7603e', '#397157'];
+        const paths = series.map((item, index) => `<polyline fill="none" stroke="${colors[index]}" stroke-width="2.5" points="${item.points.sort((a, b) => new Date(a.date) - new Date(b.date)).map(point => `${x(point.date)},${y(point.value)}`).join(' ')}" />`).join('');
+        const labels = series.length > 1 ? `<div class="chart-legend">${series.map((item, index) => `<span><i style="background:${colors[index]}"></i>${item.label}</span>`).join('')}</div>` : '';
+        container.innerHTML = `<div class="chart-meta"><strong>${escapeHtml(definition.label)}</strong><span>${escapeHtml(definition.unit)}</span></div><svg class="line-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(definition.label)} over time"><line class="chart-axis" x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" />${paths}<text x="${pad.left}" y="${height - 8}">${formatDate(allPoints[0].date)}</text><text x="${width - pad.right}" y="${height - 8}" text-anchor="end">${formatDate(allPoints[allPoints.length - 1].date)}</text></svg>${labels}`;
+    }
+    function renderVitals(observations) {
+        const charts = document.querySelector('#vital-charts'); const rows = document.querySelector('#vital-rows'); charts.innerHTML = ''; rows.innerHTML = '';
+        vitalDefinitions.forEach(definition => {
+            const relevant = definition.components ? observations.filter(item => item.code?.coding?.some(coding => ['55284-4', '85354-9'].includes(coding.code))) : observations.filter(item => item.code?.coding?.some(coding => coding.code === definition.code));
+            const chart = document.createElement('article'); chart.className = 'vital-card'; drawChart(chart, definition, relevant); charts.appendChild(chart);
+            if (definition.components) relevant.forEach(item => (item.component || []).filter(part => definition.components.some(component => component.code === part.code?.coding?.[0]?.code)).forEach(part => { const label = definition.components.find(component => component.code === part.code?.coding?.[0]?.code).label; rows.insertAdjacentHTML('beforeend', `<tr><td>${escapeHtml(definition.label)} (${label})</td><td>${formatDate(dateOf(item))}</td><td>${escapeHtml(String(valueOf(part)))} ${escapeHtml(part.valueQuantity?.unit || definition.unit)}</td></tr>`); }));
+            else relevant.forEach(item => rows.insertAdjacentHTML('beforeend', `<tr><td>${escapeHtml(definition.label)}</td><td>${formatDate(dateOf(item))}</td><td>${escapeHtml(String(valueOf(item)))} ${escapeHtml(item.valueQuantity?.unit || definition.unit)}</td></tr>`));
+        });
+        document.querySelector('#vital-empty').hidden = rows.children.length > 0;
+    }
+    function renderRows(id, resources, emptyId, cells) { const body = document.querySelector(id); body.innerHTML = ''; resources.forEach(resource => body.insertAdjacentHTML('beforeend', `<tr>${cells(resource)}</tr>`)); document.querySelector(emptyId).hidden = resources.length > 0; }
+
+
+    document.querySelectorAll('.toggle-button').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('.toggle-button').forEach(item => item.classList.toggle('active', item === button)); document.querySelector('#vital-charts').hidden = button.dataset.view !== 'charts'; document.querySelector('#vital-table').hidden = button.dataset.view !== 'table'; }));
+    document.querySelector('#vital-charts').hidden = false;
+    Promise.all([getJson(`/api/patients/${encodeURIComponent(patientId)}`), getJson(`/api/patients/${encodeURIComponent(patientId)}/observations`), getJson(`/api/patients/${encodeURIComponent(patientId)}/conditions`), getJson(`/api/patients/${encodeURIComponent(patientId)}/medications`)]).then(([patient, observationBundle, conditionBundle, medicationBundle]) => {
+        document.querySelector('#patient-name').textContent = patientName(patient); document.querySelector('#patient-gender').textContent = patient.gender || 'Not recorded'; document.querySelector('#patient-birth-date').textContent = formatDate(patient.birthDate);
+        renderVitals(bundleResources(observationBundle));
+        renderRows('#condition-rows', bundleResources(conditionBundle), '#condition-empty', condition => `<td>${escapeHtml(displayCode(condition))}</td><td>${formatDate(condition.onsetDateTime || condition.onsetPeriod?.start)}</td>`);
+        renderRows('#medication-rows', bundleResources(medicationBundle), '#medication-empty', medication => `<td>${escapeHtml(medication.medicationCodeableConcept?.text || medication.medicationCodeableConcept?.coding?.[0]?.display || medication.medicationReference?.display || 'Not recorded')}</td><td>${escapeHtml(medication.status || 'Not recorded')}</td>`);
+        loading.hidden = true; content.hidden = false;
+    }).catch(error => { loading.hidden = true; showError(error.message); });
+})();
+</script>
+}

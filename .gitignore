@@ -1,0 +1,14 @@
+## .NET build output
+bin/
+obj/
+
+## Visual Studio and VS Code local state
+.vs/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+
+## Local environment and secrets
+appsettings.Local.json
+*.user
+*.suo
