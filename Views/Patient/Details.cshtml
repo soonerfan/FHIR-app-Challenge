@@ -20,8 +20,9 @@
         </header>
 
         <section class="detail-section">
-            <div class="section-bar"><div><p class="section-kicker">Clinical measurements</p><h2>Vitals</h2></div><div class="view-toggle" role="group" aria-label="Vitals display mode"><button class="toggle-button active" data-view="charts" type="button">Charts</button><button class="toggle-button" data-view="table" type="button">Table</button></div></div>
-            <div id="vital-charts" class="vital-grid"></div>
+            <div class="section-bar"><div><p class="section-kicker">Clinical measurements</p><h2>Vitals</h2></div><div class="view-toggle" role="tablist" aria-label="Vitals display mode"><button class="toggle-button active" data-view="charts" type="button" role="tab" aria-selected="true">Charts</button><button class="toggle-button" data-view="table" type="button" role="tab" aria-selected="false">Table</button></div></div>
+            <div id="vital-tabs" class="vital-tabs" role="tablist" aria-label="Select a vital sign"></div>
+            <div id="vital-charts" class="vital-grid" aria-live="polite"></div>
             <div id="vital-table" class="data-table-wrap" hidden><table><thead><tr><th>Vital sign</th><th>Date</th><th>Value</th></tr></thead><tbody id="vital-rows"></tbody></table><div id="vital-empty" class="empty-state" hidden>No vital sign readings found.</div></div>
         </section>
 
@@ -45,6 +46,9 @@
         { code: '8302-2', label: 'Height', unit: 'cm' }, { code: '29463-7', label: 'Weight', unit: 'kg' }, { code: '39156-5', label: 'BMI', unit: 'kg/m2' },
         { code: 'blood-pressure', label: 'Blood pressure', unit: 'mmHg', components: [{ code: '8480-6', label: 'Systolic' }, { code: '8462-4', label: 'Diastolic' }] }
     ];
+    let activeVitalIndex = 0;
+    let activeView = 'charts';
+    let allObservations = [];
     const escapeHtml = value => { const div = document.createElement('div'); div.textContent = value ?? ''; return div.innerHTML; };
     const formatDate = value => value ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Not recorded';
     const showError = text => { message.textContent = text; message.className = 'message error'; };
@@ -69,24 +73,64 @@
         const labels = series.length > 1 ? `<div class="chart-legend">${series.map((item, index) => `<span><i style="background:${colors[index]}"></i>${item.label}</span>`).join('')}</div>` : '';
         container.innerHTML = `<div class="chart-meta"><strong>${escapeHtml(definition.label)}</strong><span>${escapeHtml(definition.unit)}</span></div><svg class="line-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(definition.label)} over time"><line class="chart-axis" x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" />${paths}<text x="${pad.left}" y="${height - 8}">${formatDate(allPoints[0].date)}</text><text x="${width - pad.right}" y="${height - 8}" text-anchor="end">${formatDate(allPoints[allPoints.length - 1].date)}</text></svg>${labels}`;
     }
-    function renderVitals(observations) {
-        const charts = document.querySelector('#vital-charts'); const rows = document.querySelector('#vital-rows'); charts.innerHTML = ''; rows.innerHTML = '';
-        vitalDefinitions.forEach(definition => {
-            const relevant = definition.components ? observations.filter(item => item.code?.coding?.some(coding => ['55284-4', '85354-9'].includes(coding.code))) : observations.filter(item => item.code?.coding?.some(coding => coding.code === definition.code));
-            const chart = document.createElement('article'); chart.className = 'vital-card'; drawChart(chart, definition, relevant); charts.appendChild(chart);
-            if (definition.components) relevant.forEach(item => (item.component || []).filter(part => definition.components.some(component => component.code === part.code?.coding?.[0]?.code)).forEach(part => { const label = definition.components.find(component => component.code === part.code?.coding?.[0]?.code).label; rows.insertAdjacentHTML('beforeend', `<tr><td>${escapeHtml(definition.label)} (${label})</td><td>${formatDate(dateOf(item))}</td><td>${escapeHtml(String(valueOf(part)))} ${escapeHtml(part.valueQuantity?.unit || definition.unit)}</td></tr>`); }));
-            else relevant.forEach(item => rows.insertAdjacentHTML('beforeend', `<tr><td>${escapeHtml(definition.label)}</td><td>${formatDate(dateOf(item))}</td><td>${escapeHtml(String(valueOf(item)))} ${escapeHtml(item.valueQuantity?.unit || definition.unit)}</td></tr>`));
+    function renderVitalTabs() {
+        const tabs = document.querySelector('#vital-tabs');
+        tabs.innerHTML = vitalDefinitions.map((definition, index) => `<button class="vital-tab ${index === activeVitalIndex ? 'active' : ''}" type="button" role="tab" aria-selected="${index === activeVitalIndex}" data-index="${index}">${escapeHtml(definition.label)}</button>`).join('');
+        tabs.querySelectorAll('.vital-tab').forEach(button => {
+            button.addEventListener('click', () => {
+                activeVitalIndex = Number(button.dataset.index);
+                renderVitalTabs();
+                renderCurrentVital(allObservations);
+            });
         });
+    }
+    function getRelevantObservations(definition, observations) {
+        if (definition.components) {
+            return observations.filter(item => item.code?.coding?.some(coding => ['55284-4', '85354-9'].includes(coding.code)));
+        }
+        return observations.filter(item => item.code?.coding?.some(coding => coding.code === definition.code));
+    }
+    function renderCurrentVital(observations = allObservations) {
+        const definition = vitalDefinitions[activeVitalIndex];
+        const relevant = getRelevantObservations(definition, observations);
+        const chartContainer = document.querySelector('#vital-charts');
+        const rows = document.querySelector('#vital-rows');
+        chartContainer.innerHTML = '';
+        rows.innerHTML = '';
+
+        const chart = document.createElement('article'); chart.className = 'vital-card vital-card-wide'; drawChart(chart, definition, relevant); chartContainer.appendChild(chart);
+
+        if (definition.components) {
+            relevant.forEach(item => (item.component || []).filter(part => definition.components.some(component => component.code === part.code?.coding?.[0]?.code)).forEach(part => {
+                const label = definition.components.find(component => component.code === part.code?.coding?.[0]?.code)?.label || definition.label;
+                rows.insertAdjacentHTML('beforeend', `<tr><td>${escapeHtml(definition.label)} (${label})</td><td>${formatDate(dateOf(item))}</td><td>${escapeHtml(String(valueOf(part)))} ${escapeHtml(part.valueQuantity?.unit || definition.unit)}</td></tr>`);
+            }));
+        } else {
+            relevant.forEach(item => rows.insertAdjacentHTML('beforeend', `<tr><td>${escapeHtml(definition.label)}</td><td>${formatDate(dateOf(item))}</td><td>${escapeHtml(String(valueOf(item)))} ${escapeHtml(item.valueQuantity?.unit || definition.unit)}</td></tr>`));
+        }
+
         document.querySelector('#vital-empty').hidden = rows.children.length > 0;
+        chartContainer.hidden = activeView !== 'charts';
+        document.querySelector('#vital-table').hidden = activeView !== 'table';
     }
     function renderRows(id, resources, emptyId, cells) { const body = document.querySelector(id); body.innerHTML = ''; resources.forEach(resource => body.insertAdjacentHTML('beforeend', `<tr>${cells(resource)}</tr>`)); document.querySelector(emptyId).hidden = resources.length > 0; }
 
+    document.querySelectorAll('.toggle-button').forEach(button => button.addEventListener('click', () => {
+        activeView = button.dataset.view;
+        document.querySelectorAll('.toggle-button').forEach(item => {
+            const isActive = item === button;
+            item.classList.toggle('active', isActive);
+            item.setAttribute('aria-selected', String(isActive));
+        });
+        document.querySelector('#vital-charts').hidden = activeView !== 'charts';
+        document.querySelector('#vital-table').hidden = activeView !== 'table';
+    }));
 
-    document.querySelectorAll('.toggle-button').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('.toggle-button').forEach(item => item.classList.toggle('active', item === button)); document.querySelector('#vital-charts').hidden = button.dataset.view !== 'charts'; document.querySelector('#vital-table').hidden = button.dataset.view !== 'table'; }));
-    document.querySelector('#vital-charts').hidden = false;
     Promise.all([getJson(`/api/patients/${encodeURIComponent(patientId)}`), getJson(`/api/patients/${encodeURIComponent(patientId)}/observations`), getJson(`/api/patients/${encodeURIComponent(patientId)}/conditions`), getJson(`/api/patients/${encodeURIComponent(patientId)}/medications`)]).then(([patient, observationBundle, conditionBundle, medicationBundle]) => {
+        allObservations = bundleResources(observationBundle);
         document.querySelector('#patient-name').textContent = patientName(patient); document.querySelector('#patient-gender').textContent = patient.gender || 'Not recorded'; document.querySelector('#patient-birth-date').textContent = formatDate(patient.birthDate);
-        renderVitals(bundleResources(observationBundle));
+        renderVitalTabs();
+        renderCurrentVital(allObservations);
         renderRows('#condition-rows', bundleResources(conditionBundle), '#condition-empty', condition => `<td>${escapeHtml(displayCode(condition))}</td><td>${formatDate(condition.onsetDateTime || condition.onsetPeriod?.start)}</td>`);
         renderRows('#medication-rows', bundleResources(medicationBundle), '#medication-empty', medication => `<td>${escapeHtml(medication.medicationCodeableConcept?.text || medication.medicationCodeableConcept?.coding?.[0]?.display || medication.medicationReference?.display || 'Not recorded')}</td><td>${escapeHtml(medication.status || 'Not recorded')}</td>`);
         loading.hidden = true; content.hidden = false;
